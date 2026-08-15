@@ -2,20 +2,22 @@
 pragma solidity ^0.8.27;
 
 import {FhevmTest} from "forge-fhevm/FhevmTest.sol";
-import {IHCULimit} from "forge-fhevm/generated/interfaces/IHCULimit.sol";
-import {IFHEVMExecutor} from "forge-fhevm/generated/interfaces/IFHEVMExecutor.sol";
+import {HCULimit} from "@fhevm/host-contracts/contracts/HCULimit.sol";
+import {FHEVMExecutor} from "@fhevm/host-contracts/contracts/FHEVMExecutor.sol";
+import {EmptyUUPSProxy} from "@fhevm/host-contracts/contracts/emptyProxy/EmptyUUPSProxy.sol";
 import {hcuLimitAdd} from "forge-fhevm/fhevm-host/addresses/FHEVMHostAddresses.sol";
 import {FHE, ebool, euint64, externalEuint64} from "@fhevm/solidity/lib/FHE.sol";
 import {ZamaEthereumConfig} from "@fhevm/solidity/config/ZamaConfig.sol";
 import {IERC7984} from "@openzeppelin/confidential-contracts/interfaces/IERC7984.sol";
 
-import {ConfidentialTrex} from "../src/ConfidentialTrex.sol";
+import {ConfidentialTrex} from "../src/Token.sol";
 import {ModularCompliance} from "../src/ModularCompliance.sol";
 import {IdentityRegistryMock} from "../src/IdentityRegistryMock.sol";
 import {ICompliance} from "../src/interfaces/ICompliance.sol";
 import {IComplianceModule} from "../src/interfaces/IComplianceModule.sol";
 import {MaxHoldingModule} from "../src/modules/MaxHoldingModule.sol";
 import {MinHoldingModule} from "../src/modules/MinHoldingModule.sol";
+import {HCULimitHarness} from "./harness/HCULimitHarness.sol";
 
 /// DEMO-ONLY test double: `ModularCompliance` with the single
 /// `FHE.allowTransient(amount, module)` deleted, to show that grant is
@@ -69,6 +71,9 @@ contract LeakyCompliance is ZamaEthereumConfig, ICompliance {
 contract ComplianceSeamTest is FhevmTest {
     uint64 constant UNIT = 10 ** 6;
     uint256 constant AUDITOR_PK = 0xA11CE;
+
+    /// The depth cap the vendored `HCULimit` compiles in as a private constant.
+    uint256 constant PRODUCTION_MAX_DEPTH = 5_000_000;
 
     ConfidentialTrex token;
     ModularCompliance compliance;
@@ -128,7 +133,7 @@ contract ComplianceSeamTest is FhevmTest {
         leaky.addModule(address(new MinHoldingModule()));
 
         (handle, proof) = encryptUint64(500_000 * UNIT, alice, address(leakyToken));
-        vm.expectPartialRevert(IFHEVMExecutor.ACLNotAllowed.selector);
+        vm.expectPartialRevert(FHEVMExecutor.ACLNotAllowed.selector);
         vm.prank(alice);
         leakyToken.confidentialTransfer(bob, handle, proof);
     }
@@ -140,9 +145,12 @@ contract ComplianceSeamTest is FhevmTest {
     /// which Foundry clears per test rather than per call, so a second transfer
     /// would inherit the first one's depth and measure nothing real.
     function test_hcuWithinBudget() public {
-        _transfer(alice, bob, 500_000 * UNIT);
+        HCULimitHarness meter = _installHCULimit(PRODUCTION_MAX_DEPTH);
 
-        (, uint48 usedHCU) = IHCULimit(hcuLimitAdd).getBlockMeter();
+        uint256 before = meter.transactionHCU();
+        _transfer(alice, bob, 500_000 * UNIT);
+        uint256 usedHCU = meter.transactionHCU() - before;
+
         emit log_named_uint("HCU for one compliant transfer", usedHCU);
         assertLt(usedHCU, 2_500_000, "over the 2,500,000 budget the slice commits to");
     }
@@ -151,8 +159,7 @@ contract ComplianceSeamTest is FhevmTest {
     /// modules, rather than settling for "somewhere under 5,000,000". Depth grows
     /// with every module, so the budget decides how many rules a transfer carries.
     function test_depthHeadroomUpperBracket() public {
-        vm.prank(PROXY_OWNER);
-        IHCULimit(hcuLimitAdd).setMaxHCUDepthPerTx(800_000);
+        _installHCULimit(800_000);
 
         _transfer(alice, bob, 500_000 * UNIT);
         assertEq(decrypt(token.confidentialBalanceOf(bob)), 500_000 * UNIT);
@@ -160,11 +167,10 @@ contract ComplianceSeamTest is FhevmTest {
 
     /// The failing half, so the passing one above is not vacuous.
     function test_depthHeadroomLowerBracket() public {
-        vm.prank(PROXY_OWNER);
-        IHCULimit(hcuLimitAdd).setMaxHCUDepthPerTx(700_000);
+        _installHCULimit(700_000);
 
         (externalEuint64 handle, bytes memory proof) = encryptUint64(500_000 * UNIT, alice, address(token));
-        vm.expectRevert(IHCULimit.HCUTransactionDepthLimitExceeded.selector);
+        vm.expectRevert(HCULimit.HCUTransactionDepthLimitExceeded.selector);
         vm.prank(alice);
         token.confidentialTransfer(bob, handle, proof);
     }
@@ -252,6 +258,16 @@ contract ComplianceSeamTest is FhevmTest {
         returns (uint256)
     {
         return userDecrypt(handle, user, contractAddress, sig);
+    }
+
+    /// Swaps the host `HCULimit` implementation for one that reports its meter
+    /// and enforces `maxDepthPerTx`. The host contract exposes neither, so the
+    /// only way at them is the proxy the test harness already put in place.
+    function _installHCULimit(uint256 maxDepthPerTx) private returns (HCULimitHarness) {
+        address implementation = address(new HCULimitHarness(maxDepthPerTx));
+        vm.prank(PROXY_OWNER);
+        EmptyUUPSProxy(payable(hcuLimitAdd)).upgradeToAndCall(implementation, "");
+        return HCULimitHarness(hcuLimitAdd);
     }
 
     function _transfer(address from, address to, uint64 amount) private {
