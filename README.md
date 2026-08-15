@@ -1,4 +1,4 @@
-# Confidential T-REX
+# Confidential ERC-3643
 
 A confidential version of an ERC-3643 permissioned token: balances and transfer
 amounts encrypted under ERC-7984 (FHEVM), the permissioning kept, and a named
