@@ -14,7 +14,6 @@ contract ConfidentialTrex is ZamaEthereumConfig, ERC7984 {
     ICompliance public immutable compliance;
     address public immutable auditor;
 
- 
     address public immutable agent;
 
     uint64 public disclosedTotalSupply;

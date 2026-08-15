@@ -3,7 +3,6 @@ pragma solidity ^0.8.27;
 
 import {HCULimit} from "@fhevm/host-contracts/contracts/HCULimit.sol";
 
-
 contract HCULimitHarness is HCULimit {
     /// @dev Immutable, so it lives in code rather than in proxy storage and
     /// cannot collide with the namespaced storage of the contract it replaces.

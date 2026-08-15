@@ -18,7 +18,6 @@ contract ModularCompliance is ZamaEthereumConfig, ICompliance {
     error OnlyToken(address caller);
     error AlreadyBound();
 
-
     function bindToken(address token_) external {
         require(token == address(0), AlreadyBound());
         token = token_;
