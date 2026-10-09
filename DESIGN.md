@@ -10,23 +10,21 @@ The asset manager issues MMF shares as an ERC-3643 permissioned token. It works,
 
 The goal is a confidential version of the same token: balances and amounts become ERC-7984 ciphertext, the permissioning keeps working, and a named auditor can read everything off chain. The rules that bind today keep binding:
 
-
-| #   | Rule                                                          |
-| --- | ------------------------------------------------------------- |
-| R1  | Valid KYC/AML claim from a trusted issuer                     |
-| R2  | Permitted jurisdiction                                        |
-| R3  | Neither wallet frozen, fund not paused                        |
-| R4  | No investor above 10% of supply, on transfer and subscription |
-| R5  | Minimum holding of 100,000 units                              |
-
+| # | Rule |
+| --- | --- |
+| R1 | Valid KYC/AML claim from a trusted issuer |
+| R2 | Permitted jurisdiction |
+| R3 | Neither wallet frozen, fund not paused |
+| R4 | No investor above 10% of supply, on transfer and subscription |
+| R5 | Minimum holding of 100,000 units |
 
 The end state: an observer sees who is in the fund and when they deal, never for how much. The auditor sees everything. The same rules block the same transfers.
 
-## Pushback
+## Pushback on the brief
 
 **"Keep the permissioning" cannot mean interface-level ERC-3643 conformance.** `balanceOf` is gone and `canTransfer` is no longer `view`, so any tool expecting the ERC-20 surface breaks. What we commit to is behavioural conformance: the same rules bind the same transfers with the same outcomes.
 
-**The primary market has to be encrypted too**, which was not in the ask. Every subscription and redemption belongs to a named investor, so if those amounts are public, anyone can add them up and recover the balances we just hid.
+**The primary market has to be encrypted too**, which the brief didn’t ask. Every subscription and redemption belongs to a named investor, so if those amounts are public, anyone can add them up and recover the balances we just hid.
 
 Encrypting them is not enough on its own. Shares are bought with cash at a published NAV, so the number of shares is the cash divided by a public number. Anyone who sees an investor's subscription payment knows the mint amount exactly, and the redemption payment gives them the burn. So the cash has to be as private as the shares. The design assumes subscriptions and redemptions settle off chain, by wire to the fund's custodian. If the fund ever settles on chain in a public stablecoin, the confidentiality is gone whatever the token does, and the cash leg has to move to a confidential token too.
 
@@ -36,49 +34,37 @@ Encrypting them is not enough on its own. Shares are bought with cash at a publi
 
 ERC-3643 splits along exactly the line the fund needs: identity logic reads addresses, compliance reads amounts. So the change lands on the amount side and the identity side is reused as deployed.
 
-
-| Component                                          | Change                                                                                                                               |
-| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| **Token**                                          | **rebuilt**: `ConfidentialTrex` extends ERC7984 instead of ERC-20                                                                    |
+| Component | Change |
+| --- | --- |
+| **Token** | **rebuilt**: `ConfidentialTrex` extends ERC7984 instead of ERC-20 |
 | **Compliance** (ModularCompliance and its modules) | **retyped**: `uint256` becomes `euint64`, `bool` becomes `ebool`. Amount-keyed modules retyped with it, address-keyed ones unchanged |
-
 
 An issuer's existing deployment carries over: same registries, same trusted issuers, same onboarded investors, same agents. This is a token swap, not a re-onboarding.
 
 What each value looks like afterwards:
 
-
-| Value                                          | Visibility                                                                                |
-| ---------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| Holder balances                                | Encrypted                                                                                 |
-| Transfer amounts                               | Encrypted                                                                                 |
-| Mint and burn amounts                          | Encrypted (see Pushback)                                                                  |
-| Which address subscribed or redeemed, and when | Public (see Trade offs)                                                                   |
-| Total supply                                   | Public, published periodically under a KMS-signed proof (see Design)                      |
-| Holder addresses                               | Public on chain, unchanged from ERC-3643; claim contents stay off chain against ONCHAINID |
-| Auditor's view                                 | Full plaintext, off chain (see Design)                                                    |
-
-
-
+| Value | Visibility |
+| --- | --- |
+| Holder balances | Encrypted |
+| Transfer amounts | Encrypted |
+| Mint and burn amounts | Encrypted (see Pushback) |
+| Which address subscribed or redeemed, and when | Public (see Trade offs) |
+| Total supply | Public, published periodically under a KMS-signed proof (see Design) |
+| Holder addresses | Public on chain, unchanged from ERC-3643; claim contents stay off chain against ONCHAINID |
+| Auditor's view | Full plaintext, off chain (see Design) |
 
 ### Trade offs
 
 - **Who deals with the fund, and when, stays public.** Mint and burn emit the investor's address, so an observer sees that a named holder subscribed or redeemed and at what time, just not for how much. Hiding that means holding through an omnibus account, which moves the investor register off chain and takes ERC-3643 with it. Accepted.
 - **The 10% cap reads a published plaintext supply, not the encrypted handle.** That keeps the comparison a cheap scalar operation. The cost is freshness: between publishes the cap binds against the last published figure (see Risks). It also cannot bind before the first publish, so the fund seeds the figure at launch.
 
-
-
 ### Risks
 
-
-| Risk                   | Why it matters                                                                                                                                              | Mitigation                                                                                                   |
-| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| Auditor key compromise | The key does not just read. Anyone allowed on a handle can grant it onward, or mark it publicly decryptable, and the ACL has no revoke for persistent grants. A stolen key makes disclosure permanent in one transaction, and rotation does not undo it | see ./APPROACH.md |
-| ACL grant bug          | A missed grant blinds the auditor permanently for that handle; an over-broad grant is a disclosure that cannot be undone                                    | Covered by the build slice, negative case included: deleting a grant fails the auditor's decrypt. Reviewed as security-critical code |
-| Stale published supply | If nobody publishes, R4 enforces 10% of an old number                                                                                                       | Publishing runs at each NAV strike; the stored figure carries a timestamp and staleness is monitored         |
-
-
-
+| Risk | Why it matters | Mitigation |
+| --- | --- | --- |
+| Auditor key compromise | The key does not just read. Anyone allowed on a handle can grant it onward, or mark it publicly decryptable, and the ACL has no revoke for persistent grants. A stolen key makes disclosure permanent in one transaction, and rotation does not undo it | Not covered in V1: key custody has to be settled before launch. A delegated auditor is sketched under Out of scope |
+| ACL grant bug | A missed grant blinds the auditor permanently for that handle; an over-broad grant is a disclosure that cannot be undone | Covered by the build slice, negative case included: deleting a grant fails the auditor's decrypt. Reviewed as security-critical code |
+| Stale published supply | If nobody publishes, R4 enforces 10% of an old number | Publishing runs at each NAV strike; the stored figure carries a timestamp and staleness is monitored |
 
 ### Protocol constraints
 
@@ -88,22 +74,17 @@ What each value looks like afterwards:
 - **Decryption is async, in seconds.** No rule may depend on a decrypted value, and the auditor reads off chain rather than on.
 - `euint64` **tops out near 1.8e19.** This is why the token uses 6 decimals rather than 18: at 18, a fund of any size overflows, and there is no headroom left for intermediate products.
 
-
-
 ## Out of scope
 
 - **The Identity Verifier.** `IdentityRegistry` and the ONCHAINID claim stack remain untouchable, reused exactly as deployed. Everything in them is address-keyed and never sees an amount, so encryption changes nothing. The token calls only `isVerified` on the transfer path.
 - **Batch operations.** ERC-3643 specifies `batchTransfer`, `batchMint` and the batch freeze calls. Each element carries its own FHE cost, so batch sizes that are routine today exceed the per-transaction cap and have to be chunked.
 - **Partial freeze and wallet recovery.** `getFrozenTokens` turns a `uint256` into encrypted state, which adds a comparison to every transfer, and `recoveryAddress` has to move handles and re-grant the ACL to the new wallet.
 - **The yield layer.** What is being made confidential is an investor's claim on the pool, not what the pool earns. In an accumulating class the two do not interact anyway: income accrues into NAV rather than being distributed.
-
-
+- **A delegated auditor.** A privacy manager contract holds the grants and delegates them to rotating operational keys. `Allowed` events are monitored for a key re-granting what it can see.
 
 ## Design
 
-
-
-### End-to-end flow
+### Sequence Diagram
 
 ```mermaid
 sequenceDiagram
@@ -131,10 +112,7 @@ sequenceDiagram
     Note over Token,Relayer: on mint and burn the supply handle becomes publicly decryptable; anyone decrypts it and publishTotalSupply verifies the KMS proof on chain
 ```
 
-
-
-
-One transfer, end to end:
+Transfer Flow:
 
 1. The investor's client encrypts the amount through the Zama SDK and gets a handle plus an input proof bound to the token contract.
 2. `confidentialTransfer` lands in `_update`, the single interception point.
@@ -144,8 +122,6 @@ One transfer, end to end:
 6. `super._update` moves the balances. ERC7984 applies its own select on top for insufficient balance.
 7. The new handles are granted to the token, both holders and the auditor, and the compliance hooks get the actually transferred amount.
 8. Off chain, the auditor decrypts any handle they were granted, through the relayer with an EIP-712 signed request. On mint and burn the supply handle is also marked publicly decryptable, which feeds the supply publishing loop.
-
-
 
 ### Core components
 
@@ -162,14 +138,12 @@ Requirements:
 
 - **Satisfies ERC-3643 behaviourally.** The same rules bind the same transfers, mints and burns with the same outcomes. What runs on each path is ERC-3643's own asymmetry, kept:
 
-
-| Path                       | What runs                                                            |
-| -------------------------- | -------------------------------------------------------------------- |
-| `transfer`, `transferFrom` | address rules, amount rules, then `transferred`                      |
-| `mint`                     | both, then `created`                                                 |
-| `burn`                     | address rules only, then `destroyed`                                 |
-| `forcedTransfer`           | address rules only, as in ERC-3643: the agent override skips compliance |
-
+| Path | What runs |
+| --- | --- |
+| `transfer`, `transferFrom` | address rules, amount rules, then `transferred` |
+| `mint` | both, then `created` |
+| `burn` | address rules only, then `destroyed` |
+| `forcedTransfer` | address rules only, as in ERC-3643: the agent override skips compliance |
 
 - **Cannot satisfy ERC-20 fully.** Balances and amounts are handles, so `balanceOf`, `totalSupply` and the plaintext transfer functions are replaced by the ERC-7984 surface (see Pushback).
 - **Transfer, balance, mint and burn amounts stay private.** They exist on chain only as ciphertext, and no code path or event ever exposes them in plaintext.
@@ -266,28 +240,24 @@ interface IComplianceModule {
 }
 ```
 
-
-
 ## Proposed sequence of work
 
 The sequence exists to de-risk delivery: the parts that can falsify the design run first, the periphery follows.
 
-
-| WP  | Work                                                                                    | Depends on           |
-| --- | --------------------------------------------------------------------------------------- | -------------------- |
-| WP1 | Map R1 to R3 onto claim topics and registry configuration                               | none                 |
-| WP2 | Token core: `ConfidentialTrex`, `_update`, supply publishing, auditor grants            | none                 |
-| WP3 | FHE compliance modules: R4, R5, aggregator, HCU tuning                                  | `ICompliance` frozen |
-| WP4 | Auditor tooling: SDK client, batch decryption, position reconstruction, grant monitor   | WP2                  |
-| WP5 | Ops: NAV-strike publishing runbook, staleness monitoring, key handling                  | WP3, WP4             |
-| WP6 | Testnet pass: supply-proof replay and the live auditor decrypt against the real Relayer | WP4                  |
-
+| WP | Work | Depends on |
+| --- | --- | --- |
+| WP1 | Map R1 to R3 onto claim topics and registry configuration | none |
+| WP2 | Token core: `ConfidentialTrex`, `_update`, supply publishing, auditor grants | none |
+| WP3 | FHE compliance modules: R4, R5, aggregator, HCU tuning | `ICompliance` frozen |
+| WP4 | Auditor tooling: SDK client, batch decryption, position reconstruction, grant monitor | WP2 |
+| WP5 | Ops: NAV-strike publishing runbook, staleness monitoring, key handling | WP3, WP4 |
+| WP6 | Testnet pass: supply-proof replay and the live auditor decrypt against the real Relayer | WP4 |
 
 WP2 and WP3 build against the same interface, so they run in parallel. Where they compete for people, WP3 goes first: it owns the boundary the build slice below was written to test.
 
 ## Build slice: the token–compliance boundary
 
-One thing in this design could cause problems, and it sits where the token hands off to the compliance. Modules are reached with a plain `call`, so every encrypted handle needs an ACL grant at every hop, in both directions. If handles cannot cross that boundary, the rules have to move inside the compliance contract as internal code, and ERC-3643 modules stop being separately deployable and swappable at runtime, which is quite sad. 
+One thing in this design could cause problems, and it sits where the token hands off to the compliance. Modules are reached with a plain `call`, so every encrypted handle needs an ACL grant at every hop, in both directions. If handles cannot cross that boundary, the rules have to move inside the compliance contract as internal code, and ERC-3643 modules stop being separately deployable and swappable at runtime, which is quite sad.
 
 The slice runs one transfer end to end (token, compliance, both modules and back) under `forge-fhevm`. It also measures what the rule set costs, because nothing on paper said how deep the chain runs. Outcome:
 
@@ -296,19 +266,15 @@ The slice runs one transfer end to end (token, compliance, both modules and back
 - Auditor grants survive every write, through the ACL-checked decrypt path; a handle missing its grant fails the auditor's decrypt with `UserNotAuthorizedForDecrypt`.
 - One interface change: modules cannot read the token, so the compliance passes balances down as arguments (see Compliance Contract).
 
-Out of the slice: `burn` and `forcedTransfer` (same shape, fewer rules), supply publishing, the ERC-3643 periphery. 
-
+Out of the slice: `burn` and `forcedTransfer` (same shape, fewer rules), supply publishing, the ERC-3643 periphery.
 
 ## Dependencies
 
-
-| Dependency                                       | What breaks if it moves                                                                                 |
-| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------- |
-| `@openzeppelin/confidential-contracts` (ERC7984) | The `_update` signature and the disclosure path are load-bearing. Pin it.                               |
-| `@fhevm/solidity`                                | ACL and select semantics. Pin it, re-test on upgrade.                                                   |
-| Relayer                                          | On the write path, not just the read one: clients need it to build the input proof behind every encrypted amount, so down means no transfers, subscriptions or redemptions. |
-| Gateway, KMS                                     | Liveness of decryption, so the auditor flow and supply publishing. Transfers keep working without them. |
-| ONCHAINID and ERC-3643 periphery                 | Reused as is. A customised deployment means re-mapping R1 to R3.                                        |
-| Auditor key custody                              | Not code, but the biggest residual risk. Settle before launch.                                          |
-
-
+| Dependency | What breaks if it moves |
+| --- | --- |
+| `@openzeppelin/confidential-contracts` (ERC7984) | The `_update` signature and the disclosure path are load-bearing. Pin it. |
+| `@fhevm/solidity` | ACL and select semantics. Pin it, re-test on upgrade. |
+| Relayer | On the write path, not just the read one: clients need it to build the input proof behind every encrypted amount, so down means no transfers, subscriptions or redemptions. |
+| Gateway, KMS | Liveness of decryption, so the auditor flow and supply publishing. Transfers keep working without them. |
+| ONCHAINID and ERC-3643 periphery | Reused as is. A customised deployment means re-mapping R1 to R3. |
+| Auditor key custody | Not code, but the biggest residual risk. Settle before launch. |
