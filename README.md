@@ -1,49 +1,23 @@
 # Confidential ERC-3643
 
-A confidential version of an ERC-3643 permissioned token: balances and transfer
-amounts encrypted under ERC-7984 (FHEVM), the permissioning kept, and a named
-auditor with full off-chain oversight. The asset archetype is a tokenised
-money-market fund.
+An ERC-3643 permissioned token on top of ERC-7984. Balances and transfer amounts are encrypted with Zama's FHEVM.
 
-- [DESIGN.md](DESIGN.md): the design spec, the primary deliverable
-- [APPROACH.md](APPROACH.md): reflection, what would come next and how AI was used
-- `src/`, `test/`: the build slice, the token-compliance boundary with Foundry tests
+I built it as a take-home for the Solutions Engineer role at [Zama](https://www.zama.ai). The brief: an asset manager issues a permissioned token on ERC-3643 and wants a confidential version that keeps the permissioning and gives an auditor oversight. They asked for a design doc, a small build of the riskiest part, and a short reflection.
 
-### Prerequisites
+The design and the reasoning behind it are in DESIGN.md. The code in `src/` and `test/` checks the hand-off between the token and the compliance modules, the part I was least sure about.
 
-- **Foundry**: [Installation guide](https://book.getfoundry.sh/getting-started/installation)
+## Run it
 
-### Installation
+Needs [Foundry](https://book.getfoundry.sh/getting-started/installation).
 
-1. **Install dependencies**
+```bash
+forge soldeer install
+forge build
+forge test -vvv
+```
 
-   ```bash
-   forge soldeer install
-   ```
+Research prototype, not audited. Demo shortcuts are marked `// DEMO-ONLY:`.
 
-2. **Compile and test**
+## How I used AI
 
-   ```bash
-   forge build
-   forge test -vvv
-   ```
-
-
-## What the tests show
-
-`test/ComplianceSeam.t.sol` runs one confidential transfer end to end, from the
-token through the compliance to both modules and back, and tests the claims the
-design rests on:
-
-- the ACL grant relay across plain `call` boundaries holds, and a single
-  missed grant breaks the transfer;
-- a transfer carrying both amount rules (10% cap, minimum holding) fits the
-  production HCU budgets
-- the auditor decrypts every balance and amount after every write through the
-  ACL-checked path, and nothing they were not granted;
-- address rules (identity, freeze) still revert in plaintext, while amount
-  rules block silently by moving an encrypted zero.
-
-Demo-only shortcuts are marked `// DEMO-ONLY:` in the source.
-
-There is no deployment script: the slice is test-only by design. 
+Claude Code with Zama's official skills. I read the docs, sketched the design doc with my own questions, then used Claude for the details and to ship the build slice fast.
